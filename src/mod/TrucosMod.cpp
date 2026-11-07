@@ -13,27 +13,37 @@ namespace trucos {
 namespace {
 
 constexpr const char *kJumpId = "trucos_jump";
-constexpr const char *kSpeedId = "trucos_speed";
+constexpr const char *kGhostId = "trucos_ghost";
+constexpr const char *kProbeId = "trucos_probe_a";
 
 // Minecraft 1.26.60.04 (arm64-v8a), libminecraftpe.so. Each signature is a unique match.
 // Jump: tested in game, works.
 constexpr const char *kJumpSignature = "A1 00 00 36 A8 99 99 52 88 C9 A7 72 00 01 27 1E C0 03 5F D6";
-// Speed: EXPERIMENTAL candidate. Mob vtable slot 35: `ldr x8,[x0,#0x230]; ldr s0,[x8,#0x18]; ret`.
-constexpr const char *kSpeedSignature = "08 18 41 F9 00 19 40 BD C0 03 5F D6 08 A4 49 39";
+// Ghost collision / shadow: Actor vtable slot 35 (`ldr x8,[x0,#0x230]; ldr s0,[x8,#0x18]; ret`).
+// Tested in game: enlarges the shadow and the invisible collision of entities (no extra damage).
+constexpr const char *kGhostSignature = "08 18 41 F9 00 19 40 BD C0 03 5F D6 08 A4 49 39";
+// Probe A: Actor vtable slot 113 (`ldr x8,[x0,#0x238]; ldr s0,[x8,#4]; ret`). Unknown effect.
+constexpr const char *kProbeSignature = "08 1C 41 F9 00 05 40 BD C0 03 5F D6 28 1C 41 F9";
 
 using JumpFn = float (*)(void *, bool);
 using SpeedFn = float (*)(void *);
 JumpFn gOrigJump = nullptr;
-SpeedFn gOrigSpeed = nullptr;
+SpeedFn gOrigGhost = nullptr;
+SpeedFn gOrigProbe = nullptr;
 
 float jumpDetour(void *self, bool flag) {
     const float v = gOrigJump ? gOrigJump(self, flag) : 0.42f;
     return v * TrucosMod::instance().jumpMultiplier();
 }
 
-float speedDetour(void *self) {
-    const float v = gOrigSpeed ? gOrigSpeed(self) : 0.1f;
-    return v * TrucosMod::instance().speedMultiplier();
+float ghostDetour(void *self) {
+    const float v = gOrigGhost ? gOrigGhost(self) : 0.1f;
+    return v * TrucosMod::instance().ghostMultiplier();
+}
+
+float probeDetour(void *self) {
+    const float v = gOrigProbe ? gOrigProbe(self) : 0.1f;
+    return v * TrucosMod::instance().probeMultiplier();
 }
 
 // Returns true if the hook was installed.
@@ -63,15 +73,19 @@ bool TrucosMod::load() {
 bool TrucosMod::enable() {
     auto &log = getSelf().getLogger();
 
-    uintptr_t jumpAddr = 0, speedAddr = 0;
+    uintptr_t jumpAddr = 0, ghostAddr = 0, probeAddr = 0;
     const bool jumpHooked =
         installHook(kJumpSignature, reinterpret_cast<void *>(&jumpDetour),
                     reinterpret_cast<void **>(&gOrigJump), jumpAddr);
-    const bool speedHooked =
-        installHook(kSpeedSignature, reinterpret_cast<void *>(&speedDetour),
-                    reinterpret_cast<void **>(&gOrigSpeed), speedAddr);
+    const bool ghostHooked =
+        installHook(kGhostSignature, reinterpret_cast<void *>(&ghostDetour),
+                    reinterpret_cast<void **>(&gOrigGhost), ghostAddr);
+    const bool probeHooked =
+        installHook(kProbeSignature, reinterpret_cast<void *>(&probeDetour),
+                    reinterpret_cast<void **>(&gOrigProbe), probeAddr);
     log.info("jump hook: {} ({:#x})", jumpHooked ? "OK" : "FALLO", jumpAddr);
-    log.info("speed hook: {} ({:#x})", speedHooked ? "OK" : "FALLO", speedAddr);
+    log.info("ghost hook: {} ({:#x})", ghostHooked ? "OK" : "FALLO", ghostAddr);
+    log.info("probe A hook: {} ({:#x})", probeHooked ? "OK" : "FALLO", probeAddr);
 
     mJumpRegistered =
         pl::modmenu::ModuleBuilder(kJumpId, "Salto alto")
@@ -90,25 +104,43 @@ bool TrucosMod::enable() {
             })
             .registerModule();
 
-    mSpeedRegistered =
-        pl::modmenu::ModuleBuilder(kSpeedId, "Velocidad (prueba)")
-            .description(std::string("EXPERIMENTAL: multiplica la velocidad que devuelve Mob. "
-                                     "Puede afectar a otros mobs. Enganche: ") +
-                         (speedHooked ? "OK" : "NO ENCONTRADO"))
+    mGhostRegistered =
+        pl::modmenu::ModuleBuilder(kGhostId, "Colision fantasma")
+            .description(std::string("Agranda la sombra y la colision invisible de las entidades "
+                                     "(no cambia el dano). Enganche: ") +
+                         (ghostHooked ? "OK" : "NO ENCONTRADO"))
             .defaultEnabled(false)
-            .onToggle([this](std::string_view, bool on) { mSpeedOn = on; })
-            .config("multiplier", "Multiplicador de velocidad",
-                    pl::modmenu::ConfigType::SliderFloat, "1.5", "0.5", "4.0")
+            .onToggle([this](std::string_view, bool on) { mGhostOn = on; })
+            .config("multiplier", "Tamano", pl::modmenu::ConfigType::SliderFloat, "1.5", "0.5",
+                    "4.0")
             .onConfigChanged([this](std::string_view, std::string_view key, std::string_view value) {
                 if (key == "multiplier") {
                     const float v = std::strtof(std::string(value).c_str(), nullptr);
                     if (v >= 0.2f && v <= 6.0f)
-                        mSpeedMul = v;
+                        mGhostMul = v;
                 }
             })
             .registerModule();
 
-    if (!mJumpRegistered || !mSpeedRegistered)
+    mProbeRegistered =
+        pl::modmenu::ModuleBuilder(kProbeId, "Sondeo A (velocidad?)")
+            .description(std::string("EXPERIMENTAL: no se sabe que hace. Activalo y dime que "
+                                     "cambia (velocidad, camara, tamano...). Enganche: ") +
+                         (probeHooked ? "OK" : "NO ENCONTRADO"))
+            .defaultEnabled(false)
+            .onToggle([this](std::string_view, bool on) { mProbeOn = on; })
+            .config("multiplier", "Multiplicador", pl::modmenu::ConfigType::SliderFloat, "1.5",
+                    "0.5", "4.0")
+            .onConfigChanged([this](std::string_view, std::string_view key, std::string_view value) {
+                if (key == "multiplier") {
+                    const float v = std::strtof(std::string(value).c_str(), nullptr);
+                    if (v >= 0.2f && v <= 6.0f)
+                        mProbeMul = v;
+                }
+            })
+            .registerModule();
+
+    if (!mJumpRegistered || !mGhostRegistered || !mProbeRegistered)
         log.error("No se pudo registrar algun modulo en el Mod Menu");
     return true;
 }
@@ -116,14 +148,19 @@ bool TrucosMod::enable() {
 bool TrucosMod::disable() {
     // Hooks stay installed; with the toggles off both detours are pass-through.
     mJumpOn = false;
-    mSpeedOn = false;
+    mGhostOn = false;
+    mProbeOn = false;
     if (mJumpRegistered) {
         pl::modmenu::unregisterModule(kJumpId);
         mJumpRegistered = false;
     }
-    if (mSpeedRegistered) {
-        pl::modmenu::unregisterModule(kSpeedId);
-        mSpeedRegistered = false;
+    if (mGhostRegistered) {
+        pl::modmenu::unregisterModule(kGhostId);
+        mGhostRegistered = false;
+    }
+    if (mProbeRegistered) {
+        pl::modmenu::unregisterModule(kProbeId);
+        mProbeRegistered = false;
     }
     return true;
 }
