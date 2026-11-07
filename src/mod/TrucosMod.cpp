@@ -56,7 +56,7 @@ TrucosMod &TrucosMod::instance() {
 TrucosMod::TrucosMod() : mSelf(*ll::mod::NativeMod::current()) {}
 
 bool TrucosMod::load() {
-    getSelf().getLogger().info("Trucos loaded (target: 1.26.60.04)");
+    getSelf().getLogger().info("Trucos loaded (target: 1.26.60.04 y 1.26.62.01)");
     return true;
 }
 
