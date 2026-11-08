@@ -161,6 +161,8 @@ extern "C" __attribute__((visibility("hidden"))) void ptLog(int idx) {
     }
 }
 
+#if defined(__aarch64__)
+
 extern "C" __attribute__((naked, visibility("hidden"))) void pt_detour_0() {
     asm volatile(
         "stp x29, x30, [sp, #-0x120]!\n"
@@ -2361,11 +2363,13 @@ extern "C" __attribute__((naked, visibility("hidden"))) void pt_detour_70() {
         "ldr x16, [x16]\n"
         "br x16\n");
 }
+#endif  // __aarch64__
 
 namespace trucos {
 
 namespace {
 using Fn = void (*)();
+#if defined(__aarch64__)
 const Fn kDetours[kCount] = {
     &pt_detour_0,
     &pt_detour_1,
@@ -2439,9 +2443,15 @@ const Fn kDetours[kCount] = {
     &pt_detour_69,
     &pt_detour_70,
 };
+#else
+const Fn kDetours[kCount] = {};
+#endif
 }  // namespace
 
 int PackTrace::install() {
+#if !defined(__aarch64__)
+    return 0; // el rastreo solo existe para arm64
+#else
     const uintptr_t base = findBase();
     if (base == 0)
         return -1;
@@ -2461,6 +2471,7 @@ int PackTrace::install() {
     }
     gHooked = ok;
     return ok;
+#endif
 }
 
 int PackTrace::hookedCount() { return gHooked.load(); }
