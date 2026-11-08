@@ -1,4 +1,5 @@
 #include "mod/TrucosMod.h"
+#include "mod/PackTrace.h"
 
 #include <cstdlib>
 #include <string>
@@ -15,6 +16,7 @@ namespace {
 constexpr const char *kJumpId = "trucos_jump";
 constexpr const char *kGhostId = "trucos_ghost";
 constexpr const char *kProbeId = "trucos_probe_a";
+constexpr const char *kTraceId = "trucos_packtrace";
 
 // Minecraft 1.26.60.04 (arm64-v8a), libminecraftpe.so. Each signature is a unique match.
 // Jump: tested in game, works.
@@ -83,6 +85,8 @@ bool TrucosMod::enable() {
     const bool probeHooked =
         installHook(kProbeSignature, reinterpret_cast<void *>(&probeDetour),
                     reinterpret_cast<void **>(&gOrigProbe), probeAddr);
+    const int traceHooked = PackTrace::install();
+    log.info("packtrace: {} de {} funciones enganchadas", traceHooked, PackTrace::totalCount());
     log.info("jump hook: {} ({:#x})", jumpHooked ? "OK" : "FALLO", jumpAddr);
     log.info("ghost hook: {} ({:#x})", ghostHooked ? "OK" : "FALLO", ghostAddr);
     log.info("probe A hook: {} ({:#x})", probeHooked ? "OK" : "FALLO", probeAddr);
@@ -140,6 +144,17 @@ bool TrucosMod::enable() {
             })
             .registerModule();
 
+    mTraceRegistered =
+        pl::modmenu::ModuleBuilder(kTraceId, "Rastreo de packs")
+            .description(std::string("Anota que funciones del juego de packs se llaman. Activalo, "
+                                     "pulsa Activar/Desactivar en un pack, y desactivalo. Resultado en "
+                                     "Android/media/org.levimc.launcher/trucos_packtrace.txt. "
+                                     "Enganchadas: ") +
+                         std::to_string(traceHooked) + "/" + std::to_string(PackTrace::totalCount()))
+            .defaultEnabled(false)
+            .onToggle([](std::string_view, bool on) { PackTrace::setEnabled(on); })
+            .registerModule();
+
     if (!mJumpRegistered || !mGhostRegistered || !mProbeRegistered)
         log.error("No se pudo registrar algun modulo en el Mod Menu");
     return true;
@@ -157,6 +172,11 @@ bool TrucosMod::disable() {
     if (mGhostRegistered) {
         pl::modmenu::unregisterModule(kGhostId);
         mGhostRegistered = false;
+    }
+    PackTrace::setEnabled(false);
+    if (mTraceRegistered) {
+        pl::modmenu::unregisterModule(kTraceId);
+        mTraceRegistered = false;
     }
     if (mProbeRegistered) {
         pl::modmenu::unregisterModule(kProbeId);

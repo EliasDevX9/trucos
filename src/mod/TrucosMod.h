@@ -35,6 +35,7 @@ class TrucosMod {
     bool mJumpRegistered = false;
     bool mGhostRegistered = false;
     bool mProbeRegistered = false;
+    bool mTraceRegistered = false;
 };
 
 } // namespace trucos
